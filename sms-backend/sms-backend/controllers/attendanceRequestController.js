@@ -1,115 +1,81 @@
-const AttendanceRequest = require("../models/AttendanceRequest");
-const Student = require("../models/Student");
-const Attendance = require("../models/Attendance");
+const dataStore = require("../dataStore");
 
 // GET /api/attendance-requests?status=&studentId=
-const getAttendanceRequests = async (req, res) => {
-  try {
-    const { status, studentId } = req.query;
-    const query = {};
-    if (status) query.status = status;
-    if (studentId) query.studentId = studentId;
-    
-    const requests = await AttendanceRequest.find(query).sort({ createdAt: -1 });
-    res.json(requests);
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
+const getAttendanceRequests = (req, res) => {
+  const { status, studentId } = req.query;
+  let result = [...dataStore.attendanceRequests];
+  if (status) result = result.filter(r => r.status === status);
+  if (studentId) result = result.filter(r => r.studentId === studentId);
+  result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  res.json(result);
 };
 
 // POST /api/attendance-requests — Student creates a request
-const createRequest = async (req, res) => {
-  try {
-    const { studentId, eventName, eventDate, reason } = req.body;
-    if (!studentId || !eventName || !eventDate) {
-      return res.status(400).json({ message: "studentId, eventName, and eventDate are required" });
-    }
-    
-    const student = await Student.findOne({ _id: studentId });
-    
-    const request = await AttendanceRequest.create({
-      studentId, 
-      studentName: student?.name || "Unknown", 
-      rollNo: student?.rollNo || "",
-      eventName, 
-      eventDate, 
-      reason: reason || "college_function",
-      status: "pending_ta", 
-      taReviewedBy: null, 
-      facultyApprovedBy: null
-    });
-    res.status(201).json(request);
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+const createRequest = (req, res) => {
+  const { studentId, eventName, eventDate, reason } = req.body;
+  if (!studentId || !eventName || !eventDate) {
+    return res.status(400).json({ message: "studentId, eventName, and eventDate are required" });
   }
+  const student = dataStore.findById("students", studentId);
+  const request = dataStore.insert("attendanceRequests", {
+    studentId, studentName: student?.name || "Unknown", rollNo: student?.rollNo || "",
+    eventName, eventDate, reason: reason || "college_function",
+    status: "pending_ta", taReviewedBy: null, facultyApprovedBy: null,
+    createdAt: new Date().toISOString(),
+  });
+  res.status(201).json(request);
 };
 
 // PUT /api/attendance-requests/:id/ta-review — TA reviews and forwards to faculty
-const taReview = async (req, res) => {
-  try {
-    const { action, taId } = req.body; // action: "forward" or "reject"
-    const request = await AttendanceRequest.findById(req.params.id);
-    if (!request) return res.status(404).json({ message: "Request not found" });
-    if (request.status !== "pending_ta") return res.status(400).json({ message: "Request is not pending TA review" });
+const taReview = (req, res) => {
+  const { action, taId } = req.body; // action: "forward" or "reject"
+  const request = dataStore.findById("attendanceRequests", req.params.id);
+  if (!request) return res.status(404).json({ message: "Request not found" });
+  if (request.status !== "pending_ta") return res.status(400).json({ message: "Request is not pending TA review" });
 
-    if (action === "forward") {
-      request.status = "pending_faculty";
-    } else {
-      request.status = "rejected";
-    }
-    request.taReviewedBy = taId || "user-ta-001";
-    
-    await request.save();
-    res.json(request);
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+  if (action === "forward") {
+    dataStore.update("attendanceRequests", req.params.id, {
+      status: "pending_faculty", taReviewedBy: taId || "user-ta-001",
+    });
+  } else {
+    dataStore.update("attendanceRequests", req.params.id, {
+      status: "rejected", taReviewedBy: taId || "user-ta-001",
+    });
   }
+  res.json(dataStore.findById("attendanceRequests", req.params.id));
 };
 
 // PUT /api/attendance-requests/:id/faculty-approve — Faculty final approval
-const facultyApprove = async (req, res) => {
-  try {
-    const { action, facultyId } = req.body; // action: "approve" or "reject"
-    const request = await AttendanceRequest.findById(req.params.id);
-    if (!request) return res.status(404).json({ message: "Request not found" });
-    if (request.status !== "pending_faculty") return res.status(400).json({ message: "Request is not pending faculty approval" });
+const facultyApprove = (req, res) => {
+  const { action, facultyId } = req.body; // action: "approve" or "reject"
+  const request = dataStore.findById("attendanceRequests", req.params.id);
+  if (!request) return res.status(404).json({ message: "Request not found" });
+  if (request.status !== "pending_faculty") return res.status(400).json({ message: "Request is not pending faculty approval" });
 
-    if (action === "approve") {
-      request.status = "approved";
-      request.facultyApprovedBy = facultyId || "user-faculty-001";
-      await request.save();
-      
-      // Mark attendance as compensated for that date
-      const existingAtt = await Attendance.findOne({
-        studentId: request.studentId,
-        date: new Date(request.eventDate),
-        status: "absent"
+  if (action === "approve") {
+    dataStore.update("attendanceRequests", req.params.id, {
+      status: "approved", facultyApprovedBy: facultyId || "user-faculty-001",
+    });
+    // Mark attendance as compensated for that date
+    const existingAtt = dataStore.attendance.find(a =>
+      a.studentId === request.studentId && a.date === request.eventDate && a.status === "absent"
+    );
+    if (existingAtt) {
+      dataStore.update("attendance", existingAtt._id, {
+        status: "compensated", compensationReason: request.eventName, approvedBy: facultyId,
       });
-      
-      if (existingAtt) {
-        existingAtt.status = "compensated";
-        existingAtt.compensationReason = request.eventName;
-        existingAtt.approvedBy = facultyId;
-        await existingAtt.save();
-      } else {
-        await Attendance.create({
-          studentId: request.studentId, 
-          subjectId: null, 
-          date: new Date(request.eventDate),
-          status: "compensated", 
-          compensationReason: request.eventName, 
-          approvedBy: facultyId
-        });
-      }
     } else {
-      request.status = "rejected";
-      request.facultyApprovedBy = facultyId || "user-faculty-001";
-      await request.save();
+      dataStore.insert("attendance", {
+        studentId: request.studentId, subjectId: null, date: request.eventDate,
+        status: "compensated", compensationReason: request.eventName, approvedBy: facultyId,
+      });
     }
-    res.json(request);
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+  } else {
+    dataStore.update("attendanceRequests", req.params.id, {
+      status: "rejected", facultyApprovedBy: facultyId || "user-faculty-001",
+    });
   }
+  res.json(dataStore.findById("attendanceRequests", req.params.id));
 };
 
 module.exports = { getAttendanceRequests, createRequest, taReview, facultyApprove };
