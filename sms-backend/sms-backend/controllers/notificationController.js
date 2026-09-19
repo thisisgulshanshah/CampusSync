@@ -1,68 +1,107 @@
-const dataStore = require("../dataStore");
+const Notification = require("../models/Notification");
 
 // GET /api/notifications?recipientId=&recipientType=&unreadOnly=
-const getNotifications = (req, res) => {
-  const { recipientId, recipientType, unreadOnly } = req.query;
-  let result = [...dataStore.notifications];
+const getNotifications = async (req, res) => {
+  try {
+    const { recipientId, recipientType, unreadOnly } = req.query;
+    const query = {};
 
-  // Filter: recipient-specific OR broadcast
-  if (recipientId) {
-    result = result.filter(n =>
-      n.recipientId === recipientId || n.recipientType === "all" ||
-      (recipientType && n.recipientType === recipientType)
-    );
+    // Filter: recipient-specific OR broadcast
+    if (recipientId) {
+      query.$or = [
+        { recipientId: recipientId },
+        { recipientType: "all" }
+      ];
+      if (recipientType) {
+        query.$or.push({ recipientType: recipientType });
+      }
+    }
+    if (unreadOnly === "true") query.isRead = false;
+
+    const notifications = await Notification.find(query).sort({ createdAt: -1 });
+    res.json(notifications);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
   }
-  if (unreadOnly === "true") result = result.filter(n => !n.isRead);
-
-  // Sort newest first
-  result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json(result);
 };
 
 // GET /api/notifications/unread-count?recipientId=&recipientType=
-const getUnreadCount = (req, res) => {
-  const { recipientId, recipientType } = req.query;
-  let result = dataStore.notifications.filter(n => !n.isRead);
-  if (recipientId) {
-    result = result.filter(n =>
-      n.recipientId === recipientId || n.recipientType === "all" ||
-      (recipientType && n.recipientType === recipientType)
-    );
+const getUnreadCount = async (req, res) => {
+  try {
+    const { recipientId, recipientType } = req.query;
+    const query = { isRead: false };
+
+    if (recipientId) {
+      query.$or = [
+        { recipientId: recipientId },
+        { recipientType: "all" }
+      ];
+      if (recipientType) {
+        query.$or.push({ recipientType: recipientType });
+      }
+    }
+
+    const count = await Notification.countDocuments(query);
+    res.json({ count });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
   }
-  res.json({ count: result.length });
 };
 
 // POST /api/notifications
-const sendNotification = (req, res) => {
-  const { senderId, senderRole, senderName, recipientType, recipientId, title, message } = req.body;
-  if (!title || !message) return res.status(400).json({ message: "Title and message are required" });
-  const notif = dataStore.insert("notifications", {
-    senderId: senderId || "unknown", senderRole: senderRole || "admin",
-    senderName: senderName || "System", recipientType: recipientType || "all",
-    recipientId: recipientId || null, title, message, isRead: false,
-    createdAt: new Date().toISOString(),
-  });
-  res.status(201).json(notif);
+const sendNotification = async (req, res) => {
+  try {
+    const { senderId, senderRole, senderName, recipientType, recipientId, title, message } = req.body;
+    if (!title || !message) return res.status(400).json({ message: "Title and message are required" });
+    
+    const notif = await Notification.create({
+      senderId: senderId || "unknown", 
+      senderRole: senderRole || "admin",
+      senderName: senderName || "System", 
+      recipientType: recipientType || "all",
+      recipientId: recipientId || null, 
+      title, 
+      message, 
+      isRead: false
+    });
+    res.status(201).json(notif);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
 };
 
 // PUT /api/notifications/:id/read
-const markAsRead = (req, res) => {
-  const updated = dataStore.update("notifications", req.params.id, { isRead: true });
-  if (!updated) return res.status(404).json({ message: "Notification not found" });
-  res.json(updated);
+const markAsRead = async (req, res) => {
+  try {
+    const updated = await Notification.findByIdAndUpdate(req.params.id, { isRead: true }, { new: true });
+    if (!updated) return res.status(404).json({ message: "Notification not found" });
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
 };
 
 // PUT /api/notifications/read-all
-const markAllAsRead = (req, res) => {
-  const { recipientId, recipientType } = req.body;
-  let count = 0;
-  dataStore.notifications.forEach(n => {
-    if (n.isRead) return;
-    const matches = n.recipientId === recipientId || n.recipientType === "all" ||
-      (recipientType && n.recipientType === recipientType);
-    if (matches) { n.isRead = true; count++; }
-  });
-  res.json({ message: `Marked ${count} notifications as read` });
+const markAllAsRead = async (req, res) => {
+  try {
+    const { recipientId, recipientType } = req.body;
+    const query = { isRead: false };
+
+    if (recipientId) {
+      query.$or = [
+        { recipientId: recipientId },
+        { recipientType: "all" }
+      ];
+      if (recipientType) {
+        query.$or.push({ recipientType: recipientType });
+      }
+    }
+
+    const result = await Notification.updateMany(query, { isRead: true });
+    res.json({ message: `Marked ${result.modifiedCount} notifications as read` });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
 };
 
 module.exports = { getNotifications, getUnreadCount, sendNotification, markAsRead, markAllAsRead };
