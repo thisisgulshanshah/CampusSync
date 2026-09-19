@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const marksSchema = new mongoose.Schema({
-  _id: { type: String },
+  _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
   studentId: { type: String, required: true }, // 'student-0001'
   subjectId: { type: String, required: true }, // 'subject-001'
   subjectCode: { type: String },

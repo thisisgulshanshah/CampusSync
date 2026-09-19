@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const notificationSchema = new mongoose.Schema({
-  _id: { type: String },
+  _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
   senderId: { type: String, required: true },
   senderRole: { type: String },
   senderName: { type: String },

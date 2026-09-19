@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const messMenuSchema = new mongoose.Schema({
-  _id: { type: String },
+  _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
   day: { type: String, required: true },
   breakfast: { type: String, required: true },
   lunch: { type: String, required: true },

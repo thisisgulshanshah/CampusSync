@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const subjectSchema = new mongoose.Schema({
-  _id: { type: String },
+  _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
   code: { type: String, required: true, unique: true },
   name: { type: String, required: true },
   branch: { type: String, default: "ALL" },

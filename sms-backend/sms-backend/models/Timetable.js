@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const timetableSchema = new mongoose.Schema({
-  _id: { type: String },
+  _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
   branch: { type: String, required: true },
   section: { type: String, required: true },
   semester: { type: String, required: true },
